@@ -1,10 +1,7 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import google.generativeai as genai
-import random
 
 # --- ⚙️ 初始化 Gemini API ---
 try:
@@ -30,96 +27,52 @@ yf_ticker_map = {
 # --- ⚡ 核心功能函數 ---
 @st.cache_data(ttl=3600)
 def fetch_yf_data(yf_symbol):
-    """向 Yahoo 索取資料 (可能會被擋)"""
-    ticker = yf.Ticker(yf_symbol)
-    return ticker.history(period="1y"), ticker.info
+    """向 Yahoo 索取資料 (只抓最近幾天以取得最新收盤價，降低被擋機率)"""
+    try:
+        ticker = yf.Ticker(yf_symbol)
+        df = ticker.history(period="5d")
+        info = ticker.info
+        return df, info
+    except:
+        return pd.DataFrame(), {}
 
-def generate_mock_kline():
-    """當 Yahoo 擋住我們時，產生一組備用的 K 線資料維持畫面排版"""
-    dates = pd.date_range(end=pd.Timestamp.today(), periods=100)
-    data = []
-    price = 100
-    for d in dates:
-        open_p = price + random.uniform(-2, 2)
-        close_p = open_p + random.uniform(-3, 3)
-        high_p = max(open_p, close_p) + random.uniform(0, 2)
-        low_p = min(open_p, close_p) - random.uniform(0, 2)
-        vol = random.randint(1000, 10000)
-        data.append([open_p, high_p, low_p, close_p, vol])
-        price = close_p
-    return pd.DataFrame(data, columns=['Open', 'High', 'Low', 'Close', 'Volume'], index=dates)
-
-# 🌟 大腦多重備援機制
 def call_gemini(prompt):
-    models_to_try = ['gemini-1.5-pro-latest', 'gemini-1.5-flash-latest', 'gemini-pro']
-    last_error = ""
-    for model_name in models_to_try:
-        try:
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(prompt)
-            return response.text
-        except Exception as e:
-            last_error = str(e)
-            continue
-    return f"AI 暫時離線中... (錯誤資訊: {last_error})"
+    """鎖定呼叫最穩定且快速的 1.5 Flash 模型"""
+    try:
+        # 直接指定 1.5-flash，這是目前 API 支援度最高的字串
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        return f"AI 暫時離線中... (錯誤資訊: {str(e)})"
 
-def draw_kline_chart(stock_name, df, is_mock=False):
-    title_suffix = "(⚠️ 備用模擬數據)" if is_mock else "(真實數據)"
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, 
-                        subplot_titles=(f'{stock_name} - 近期日線 {title_suffix}', '成交量'), 
-                        row_width=[0.2, 0.7])
-    increasing_color = '#ef5350' 
-    decreasing_color = '#26a69a' 
-
-    fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='K線', increasing_line_color=increasing_color, decreasing_line_color=decreasing_color), row=1, col=1)
-    
-    if 'Volume' in df.columns:
-        volume_colors = [increasing_color if close >= open_ else decreasing_color for close, open_ in zip(df['Close'], df['Open'])]
-        fig.add_trace(go.Bar(x=df.index, y=df['Volume'], marker_color=volume_colors, name='成交量'), row=2, col=1)
-
-    fig.update_xaxes(showspikes=True, spikecolor="gray", spikesnap="cursor", spikemode="across", spikethickness=1)
-    fig.update_yaxes(showspikes=True, spikecolor="gray", spikesnap="cursor", spikemode="across", spikethickness=1)
-    fig.update_layout(xaxis_rangeslider_visible=False, margin=dict(l=20, r=20, t=40, b=20), height=500, showlegend=True, hovermode="x unified")
-    
-    st.plotly_chart(fig, use_container_width=True)
-
-# --- 🌟 彈出視窗 (加入絕對防禦) ---
+# --- 🌟 彈出視窗 ---
 @st.dialog("🤖 AI 投資決策終端", width="large")
 def show_stock_details(stock_name, cost_price):
     yf_symbol = yf_ticker_map.get(stock_name)
     stock_id = stock_name.split(" ")[0]
     
-    # 🛡️ 絕對防禦機制：攔截 Yahoo 的 RateLimitError
-    is_mock = False
-    try:
-        df, info = fetch_yf_data(yf_symbol)
-        if df.empty:
-            raise ValueError("Data is empty")
-    except Exception as e:
-        # 如果失敗，立刻切換為備用模式
-        is_mock = True
-        df = generate_mock_kline()
-        info = {'longBusinessSummary': '⚠️ Yahoo API 流量限制中，無法取得最新公司介紹。'}
-        st.warning("⚠️ Yahoo 股市 API 目前遭遇流量限制，圖表與部分資料已自動切換為【備用模式】以維持系統運作。")
+    df, info = fetch_yf_data(yf_symbol)
 
     st.markdown(f"### 🎯 {stock_name} 深度分析")
     
     tab_chart, tab_info, tab_ai = st.tabs(["📈 技術圖表", "🏢 公司簡介", "🧠 AI 策略分析"])
     
     with tab_chart:
-        draw_kline_chart(stock_name, df, is_mock)
-        st.link_button("🔗 Yahoo 完整線圖", f"https://tw.stock.yahoo.com/quote/{stock_id}/technical-analysis")
+        # 捨棄模擬圖表，直接提供 Yahoo 連結
+        st.info("💡 為了確保您看到最正確、即時的技術線圖與指標，請點擊下方按鈕前往 Yahoo 股市原生介面查看。")
+        st.link_button("🔗 開啟 Yahoo 完整技術線圖", f"https://tw.stock.yahoo.com/quote/{stock_id}/technical-analysis", use_container_width=True)
 
     with tab_info:
         col_intro, col_segment = st.columns([1.5, 1])
         with col_intro:
             st.markdown("#### **【基本介紹】**")
-            raw_summary = info.get('longBusinessSummary', '目前無法取得公司詳細資料。')
-            if "流量限制" not in raw_summary and raw_summary != '目前無法取得公司詳細資料。':
+            raw_summary = info.get('longBusinessSummary', '')
+            if raw_summary:
                 chinese_summary = call_gemini(f"請將以下英文公司介紹翻譯並簡化為 150 字內的繁體中文：{raw_summary}")
                 st.write(chinese_summary)
             else:
-                st.write(raw_summary)
+                st.warning("目前無法取得公司詳細資料 (可能遭遇 API 阻擋)。")
         with col_segment:
             st.markdown("#### **【業務比重估計】**")
             segments = call_gemini(f"請根據你的知識庫，列出台灣股市代號 {stock_name} 的主要業務營收比重(如：手機30%, 伺服器40%等)，請用繁體中文列點顯示，不要過多贅詞。")
@@ -127,8 +80,13 @@ def show_stock_details(stock_name, cost_price):
 
     with tab_ai:
         st.markdown("#### **【普林與索普整合建議】**")
-        current_price = df['Close'].iloc[-1]
-        prompt = f"""你是資深股票分析師。針對 {stock_name}，目前的股價約 {current_price:.1f}，
+        
+        # 取得最新價格交給 AI
+        current_price_text = "目前市價未知"
+        if not df.empty and len(df) > 0:
+            current_price_text = f"目前的股價約 {df['Close'].iloc[-1]:.1f}"
+
+        prompt = f"""你是資深股票分析師。針對 {stock_name}，{current_price_text}，
         使用者的持股成本是 {cost_price}。請結合「普林動能 (Pring)」與「索普風險管理 (Tharp)」給出分析與建議。
         要求：
         1. 給出明確的進場/加碼價格區間。
@@ -189,7 +147,6 @@ with t2:
     for i, row in enumerate(st.session_state.watch_list):
         row_cols = st.columns([1.5, 1, 1])
         with row_cols[0]:
-            # 👉 剛剛就是這裡被切斷了！確保貼上後這一行有被完整關閉括號
             if st.button(f"🎯 {row['stock']}", key=f"link_{i}_{row['stock']}", type="tertiary"):
                 show_stock_details(row['stock'], row['cost'])
         row_cols[1].write(row['cost'])
