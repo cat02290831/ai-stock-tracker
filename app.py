@@ -8,7 +8,8 @@ import google.generativeai as genai
 # --- ⚙️ 初始化 Gemini ---
 try:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    # 🌟 升級為 1.5 Pro 強效模型
+    model = genai.GenerativeModel('gemini-1.5-pro')
 except:
     st.error("⚠️ 偵測不到 API Key，請在 Streamlit Secrets 中設定 GOOGLE_API_KEY")
 
@@ -34,7 +35,6 @@ def fetch_yf_data(yf_symbol):
     return ticker.history(period="1y"), ticker.info
 
 def call_gemini(prompt):
-    """呼叫 Gemini 生成內容"""
     try:
         response = model.generate_content(prompt)
         return response.text
@@ -43,9 +43,19 @@ def call_gemini(prompt):
 
 def draw_kline_chart(stock_name, df):
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_width=[0.2, 0.7])
-    # ... (省略重複的繪圖邏輯以節省空間，與前版本一致)
-    fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='K線'), row=1, col=1)
-    fig.update_layout(xaxis_rangeslider_visible=False, height=450, hovermode="x unified")
+    increasing_color = '#ef5350' 
+    decreasing_color = '#26a69a' 
+
+    fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='K線', increasing_line_color=increasing_color, decreasing_line_color=decreasing_color), row=1, col=1)
+    
+    if 'Volume' in df.columns:
+        volume_colors = [increasing_color if close >= open_ else decreasing_color for close, open_ in zip(df['Close'], df['Open'])]
+        fig.add_trace(go.Bar(x=df.index, y=df['Volume'], marker_color=volume_colors, name='成交量'), row=2, col=1)
+
+    fig.update_xaxes(showspikes=True, spikecolor="gray", spikesnap="cursor", spikemode="across", spikethickness=1)
+    fig.update_yaxes(showspikes=True, spikecolor="gray", spikesnap="cursor", spikemode="across", spikethickness=1)
+    fig.update_layout(xaxis_rangeslider_visible=False, margin=dict(l=20, r=20, t=40, b=20), height=500, showlegend=True, hovermode="x unified")
+    
     st.plotly_chart(fig, use_container_width=True)
 
 # --- 🌟 彈出視窗 ---
@@ -57,40 +67,50 @@ def show_stock_details(stock_name, cost_price):
     
     st.markdown(f"### 🎯 {stock_name} 深度分析")
     
-    # 建立功能頁籤
     tab_chart, tab_info, tab_ai = st.tabs(["📈 技術圖表", "🏢 公司簡介", "🧠 AI 策略分析"])
     
     with tab_chart:
-        draw_kline_chart(stock_name, df)
+        if not df.empty:
+            draw_kline_chart(stock_name, df)
+        else:
+            st.warning("暫時無法取得該股票的圖表資料。")
         st.link_button("🔗 Yahoo 完整線圖", f"https://tw.stock.yahoo.com/quote/{stock_id}/technical-analysis")
 
     with tab_info:
         col_intro, col_segment = st.columns([1.5, 1])
         with col_intro:
             st.markdown("#### **【基本介紹】**")
-            # 讓 Gemini 翻譯英文介紹
-            raw_summary = info.get('longBusinessSummary', '無資料')
-            chinese_summary = call_gemini(f"請將以下英文公司介紹翻譯並簡化為 150 字內的繁體中文：{raw_summary}")
-            st.write(chinese_summary)
+            raw_summary = info.get('longBusinessSummary', '目前無法取得公司詳細資料。')
+            if raw_summary != '目前無法取得公司詳細資料。':
+                chinese_summary = call_gemini(f"請將以下英文公司介紹翻譯並簡化為 150 字內的繁體中文：{raw_summary}")
+                st.write(chinese_summary)
+            else:
+                st.write(raw_summary)
         with col_segment:
             st.markdown("#### **【業務比重估計】**")
-            segments = call_gemini(f"請根據你的知識庫，列出 {stock_name} 的主要業務營收比重(如：手機30%, 伺服器40%等)，請用繁體中文列點顯示。")
+            segments = call_gemini(f"請根據你的知識庫，列出台灣股市代號 {stock_name} 的主要業務營收比重(如：手機30%, 伺服器40%等)，請用繁體中文列點顯示，不要過多贅詞。")
             st.write(segments)
 
     with tab_ai:
         st.markdown("#### **【普林與索普整合建議】**")
-        prompt = f"""你是資深分析師。針對 {stock_name}，目前的股價約 {df['Close'].iloc[-1]:.1f}，
-        使用者的成本是 {cost_price}。請結合「普林動能」與「索普風險管理」給出建議。
-        要求：
-        1. 給出明確的進場/加碼價格區間。
-        2. 說明理由。
-        3. 請用繁體中文回覆。"""
-        strategy = call_gemini(prompt)
-        st.markdown(strategy)
+        if not df.empty:
+            current_price = df['Close'].iloc[-1]
+            prompt = f"""你是資深股票分析師。針對 {stock_name}，目前的股價約 {current_price:.1f}，
+            使用者的持股成本是 {cost_price}。請結合「普林動能 (Pring)」與「索普風險管理 (Tharp)」給出分析與建議。
+            要求：
+            1. 給出明確的進場/加碼價格區間。
+            2. 根據成本與市價給出停損停利點。
+            3. 說明策略理由。
+            4. 請用繁體中文回覆，條理分明。"""
+            strategy = call_gemini(prompt)
+            st.markdown(strategy)
+        else:
+            st.warning("缺乏最新股價資料，無法生成 AI 策略。")
         
         st.divider()
         st.markdown("#### 🎫 權證快篩")
-        st.link_button(f"🚀 凱基權證搜尋 (請手動輸入代號)", "https://warrant.kgi.com/edwebsite/views/warrantsearch/warrantsearch.aspx")
+        st.info("🔥 推薦：點擊前往凱基權證網後，請手動輸入股票代號。")
+        st.link_button(f"🚀 前往【凱基權證網】尋找 {stock_id} 權證", "https://warrant.kgi.com/edwebsite/views/warrantsearch/warrantsearch.aspx")
 
 # --- 網站主體 ---
 st.title("📈 我的專屬 AI 操盤室")
@@ -99,11 +119,44 @@ t1, t2 = st.tabs(["📊 每日大盤摘要", "🎯 觀察股區域"])
 with t1:
     st.header("今日國際情勢與大盤")
     if st.button("🔄 點此生成 AI 今日總結"):
-        summary = call_gemini("請總結今日全球金融市場焦點與台股展望，包含美股收盤、重要經濟數據，約 300 字繁體中文。")
+        with st.spinner("AI 正在為您彙整全球金融資訊..."):
+            summary = call_gemini("請扮演資深總經分析師，總結今日全球金融市場焦點與台股展望，包含美股收盤狀況、重要經濟數據，約 300 字繁體中文。")
         st.success(summary)
 
 with t2:
-    # ... (新增與列表邏輯，與前版本一致)
+    st.header("我的觀察股清單")
+    st.subheader("新增觀察股")
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        stock_list = ["請選擇...", "2330 台積電", "2317 鴻海", "2454 聯發科", "3017 奇鋐", "4919 新唐", "3689 湧德", "2327 國巨", "4958 臻鼎-KY", "5347 世界"]
+        new_ticker = st.selectbox("🔍 搜尋股票", stock_list)
+    with col2:
+        new_cost = st.number_input("成本價", min_value=0.0, step=0.1)
+    with col3:
+        new_qty = st.number_input("張數", min_value=1, step=1)
+    with col4:
+        st.markdown("<br>", unsafe_allow_html=True) 
+        if st.button("➕ 加入清單"):
+            if new_ticker != "請選擇...":
+                st.session_state.watch_list.append({"stock": new_ticker, "cost": new_cost, "qty": new_qty})
+                st.rerun()
+            else:
+                st.warning("請先搜尋並選擇一檔股票！")
+
+    st.divider() 
+    st.subheader("目前的觀察股列表")
+    st.markdown("💡 **操作提示：請直接點擊下方的「股票代號」，專屬 AI 分析視窗就會彈出來！**")
+
+    header_cols = st.columns([1.5, 1, 1])
+    header_cols[0].markdown("**股票代號 (點擊分析)**")
+    header_cols[1].markdown("**成本價**")
+    header_cols[2].markdown("**持有張數**")
+    st.markdown("---")
+
     for i, row in enumerate(st.session_state.watch_list):
-        if st.button(f"🎯 {row['stock']}", key=f"btn_{i}", type="tertiary"):
-            show_stock_details(row['stock'], row['cost'])
+        row_cols = st.columns([1.5, 1, 1])
+        with row_cols[0]:
+            if st.button(f"🎯 {row['stock']}", key=f"link_{i}_{row['stock']}", type="tertiary"):
+                show_stock_details(row['stock'], row['cost'])
+        row_cols[1].write(row['cost'])
+        row_cols[2].write(row['qty'])
