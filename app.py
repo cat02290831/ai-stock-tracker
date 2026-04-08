@@ -158,3 +158,30 @@ with tab2:
                 }
                 st.session_state.watch_list.append(new_data)
                 st.rerun()
+            else:
+                st.warning("請先搜尋並選擇一檔股票！")
+
+    st.divider() 
+
+    st.subheader("目前的觀察股列表")
+    st.markdown("💡 **操作提示：請直接點擊下方的「股票代號」，專屬 AI 分析視窗就會彈出來！**")
+
+    header_cols = st.columns([1.5, 1, 1, 1.5, 1.5, 3])
+    header_cols[0].markdown("**股票代號 (點擊分析)**")
+    header_cols[1].markdown("**成本價**")
+    header_cols[2].markdown("**持有張數**")
+    header_cols[3].markdown("**最新收盤價**")
+    header_cols[4].markdown("**漲跌幅**")
+    header_cols[5].markdown("**股價變化原因**")
+    st.markdown("---")
+
+    for i, row in enumerate(st.session_state.watch_list):
+        row_cols = st.columns([1.5, 1, 1, 1.5, 1.5, 3])
+        with row_cols[0]:
+            if st.button(f"🎯 {row['stock']}", key=f"link_{i}_{row['stock']}", type="tertiary"):
+                show_stock_details(row['stock'], row['cost'])
+        row_cols[1].write(row['cost'])
+        row_cols[2].write(row['qty'])
+        row_cols[3].write(row['price'])
+        row_cols[4].write(row['change'])
+        row_cols[5].write(row['reason'])
