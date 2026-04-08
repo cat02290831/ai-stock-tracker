@@ -189,4 +189,8 @@ with t2:
     for i, row in enumerate(st.session_state.watch_list):
         row_cols = st.columns([1.5, 1, 1])
         with row_cols[0]:
-            if st.button(f"🎯 {row['stock']}", key=f"link_{
+            # 👉 剛剛就是這裡被切斷了！確保貼上後這一行有被完整關閉括號
+            if st.button(f"🎯 {row['stock']}", key=f"link_{i}_{row['stock']}", type="tertiary"):
+                show_stock_details(row['stock'], row['cost'])
+        row_cols[1].write(row['cost'])
+        row_cols[2].write(row['qty'])
