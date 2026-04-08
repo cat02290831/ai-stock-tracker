@@ -5,10 +5,8 @@ import yfinance as yf
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-# 設定網頁標題與畫面寬度
 st.set_page_config(page_title="AI 操盤室", layout="wide")
 
-# --- 🥩 肉 (資料庫區) ---
 if "watch_list" not in st.session_state:
     st.session_state.watch_list = [
         {"stock": "3017 奇鋐", "cost": 2110.0, "qty": 2, "price": 2215.0, "change": "+4.98%", "reason": "中東局勢緩和，散熱族群報復性反彈"},
@@ -21,13 +19,11 @@ yf_ticker_map = {
     "2327 國巨": "2327.TW", "4958 臻鼎-KY": "4958.TW", "5347 世界": "5347.TWO"
 }
 
-# --- 🛡️ 防護罩 1：使用 Cache ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_yf_data(yf_symbol):
     ticker = yf.Ticker(yf_symbol)
     return ticker.history(period="1y")
 
-# --- 🛡️ 防護罩 2：備用模擬資料 (加上成交量) ---
 def generate_mock_kline():
     dates = pd.date_range(end=pd.Timestamp.today(), periods=100)
     data = []
@@ -59,11 +55,9 @@ def generate_ai_strategy(stock_name, cost_price):
 * **策略理由**：根據普林動能，該股已確認轉強；同時結合索普風控，在此區間買進距離停損點不遠，整體「風險報酬比」極佳。"""
     return pring_text, tharp_text, action_text
 
-# --- 🌟 升級版：包含均線與成交量的台股配色 K 線圖 ---
 def draw_kline_chart(stock_name):
     yf_symbol = yf_ticker_map.get(stock_name, "2330.TW")
     title_suffix = "(真實數據)"
-    
     try:
         df = fetch_yf_data(yf_symbol)
         if df.empty: raise ValueError("No Data")
@@ -72,56 +66,44 @@ def draw_kline_chart(stock_name):
         df = generate_mock_kline()
         title_suffix = "(⚠️ 備用模擬數據)"
 
-    # 計算均線 (Moving Averages)
     df['MA5'] = df['Close'].rolling(window=5).mean()
     df['MA20'] = df['Close'].rolling(window=20).mean()
     df['MA60'] = df['Close'].rolling(window=60).mean()
 
-    # 建立包含上下兩個子圖的畫布 (上面 K 線，下面成交量)
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
-                        vertical_spacing=0.03, subplot_titles=(f'{stock_name} - 近期日線 {title_suffix}', '成交量'), 
-                        row_width=[0.2, 0.7])
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, subplot_titles=(f'{stock_name} - 近期日線 {title_suffix}', '成交量'), row_width=[0.2, 0.7])
+    increasing_color = '#ef5350' 
+    decreasing_color = '#26a69a' 
 
-    # 台股配色邏輯：收盤大於開盤為紅，反之為綠
-    increasing_color = '#ef5350' # 台股紅
-    decreasing_color = '#26a69a' # 台股綠
-
-    # 1. 畫 K 線 (設定台股專屬紅綠色)
-    fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'],
-                                 name='K線',
-                                 increasing_line_color=increasing_color, decreasing_line_color=decreasing_color), row=1, col=1)
-    
-    # 2. 畫均線
+    fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='K線', increasing_line_color=increasing_color, decreasing_line_color=decreasing_color), row=1, col=1)
     fig.add_trace(go.Scatter(x=df.index, y=df['MA5'], line=dict(color='blue', width=1), name='MA5'), row=1, col=1)
     fig.add_trace(go.Scatter(x=df.index, y=df['MA20'], line=dict(color='orange', width=1), name='MA20'), row=1, col=1)
     fig.add_trace(go.Scatter(x=df.index, y=df['MA60'], line=dict(color='purple', width=1), name='MA60'), row=1, col=1)
 
-    # 3. 畫成交量 (使用台股配色)
     volume_colors = [increasing_color if close >= open_ else decreasing_color for close, open_ in zip(df['Close'], df['Open'])]
     fig.add_trace(go.Bar(x=df.index, y=df['Volume'], marker_color=volume_colors, name='成交量'), row=2, col=1)
 
-    # 美化版面，隱藏下方礙眼的拉桿
-    fig.update_layout(xaxis_rangeslider_visible=False, margin=dict(l=20, r=20, t=40, b=20), height=500, showlegend=True)
+    fig.update_xaxes(showspikes=True, spikecolor="gray", spikesnap="cursor", spikemode="across", spikethickness=1)
+    fig.update_yaxes(showspikes=True, spikecolor="gray", spikesnap="cursor", spikemode="across", spikethickness=1)
+    fig.update_layout(xaxis_rangeslider_visible=False, margin=dict(l=20, r=20, t=40, b=20), height=500, showlegend=True, hovermode="x unified")
     
     st.plotly_chart(fig, use_container_width=True)
 
-# --- 🌟 定義彈出視窗 (Pop-up Modal) ---
 @st.dialog("🤖 AI 策略與權證分析站", width="large")
 def show_stock_details(stock_name, cost_price):
     st.markdown(f"### 🎯 正在分析：{stock_name}")
     
-    # 提取股票代號 (例如從 "3017 奇鋐" 取出 "3017")
     stock_id = stock_name.split(" ")[0]
     yahoo_url = f"https://tw.stock.yahoo.com/quote/{stock_id}/technical-analysis"
     
-    # 加上可以直接連往 Yahoo 股市的按鈕
+    # 🌟 更新：權證相關網址
+    kgi_warrant_url = "https://warrant.kgi.com/edwebsite/views/warrantsearch/warrantsearch.aspx"
+    cmoney_warrant_url = f"https://www.cmoney.tw/finance/warrant/list.aspx?stock={stock_id}"
+    
     col_btn1, col_btn2 = st.columns([1, 3])
     with col_btn1:
         st.link_button("🔗 完整 Yahoo 技術線圖", yahoo_url)
     
-    # 呼叫畫圖函數
     draw_kline_chart(stock_name)
-    
     pring_text, tharp_text, action_text = generate_ai_strategy(stock_name, cost_price)
     
     col_ai, col_warrant = st.columns([1.2, 1])
@@ -132,21 +114,18 @@ def show_stock_details(stock_name, cost_price):
         st.success(action_text)
         
     with col_warrant:
-        st.markdown("#### 🎫 認購權證篩選")
-        st.caption("條件自動設定為：到期日 90 天以上、價內外 10% 以內")
-        if st.button(f"🔍 尋找 {stock_name[:4]} 的權證", key=f"btn_{stock_name}"):
-            st.success("抓取成功！")
-            mock_warrants = pd.DataFrame({
-                "權證名稱": [f"{stock_name[:4]}群益01", f"{stock_name[:4]}元大02", f"{stock_name[:4]}凱基03"],
-                "履約價": [round(cost_price*1.1, 1), round(cost_price*1.2, 1), round(cost_price*1.05, 1)],
-                "剩餘天數": [120, 95, 150],
-                "價內外": ["+2.5%", "-3.1%", "+1.2%"]
-            })
-            st.dataframe(mock_warrants, use_container_width=True, hide_index=True)
+        st.markdown("#### 🎫 認購權證快篩區")
+        st.caption("由於缺乏免費權證 API，請點選下方按鈕前往專業篩選器。")
+        
+        # 🌟 換上全新的凱基權證按鈕
+        st.info("🔥 推薦：凱基證券擁有極佳的篩選介面，點擊前往後請手動輸入股票代號。")
+        st.link_button(f"🚀 前往【凱基權證網】尋找 {stock_id} 權證", kgi_warrant_url, use_container_width=True)
+        
+        st.markdown("---")
+        st.caption("備用篩選器 (會自動帶入代號)：")
+        st.link_button(f"🔍 前往【理財寶】篩選", cmoney_warrant_url, use_container_width=True)
 
-# --- 網站主體開始 ---
 st.title("📈 我的專屬 AI 操盤室")
-
 tab1, tab2 = st.tabs(["📊 每日大盤與國際情勢", "🎯 觀察股區域"])
 
 with tab1:
@@ -155,7 +134,6 @@ with tab1:
 
 with tab2:
     st.header("我的觀察股清單")
-    
     st.subheader("新增觀察股")
     col1, col2, col3, col4 = st.columns(4)
     with col1:
@@ -170,17 +148,13 @@ with tab2:
         if st.button("➕ 加入清單"):
             if new_ticker != "請選擇...":
                 latest_price, change = fetch_simulated_stock_data(new_ticker)
-                new_data = {
-                    "stock": new_ticker, "cost": new_cost, "qty": new_qty,
-                    "price": latest_price, "change": change, "reason": "AI 分析生成中..."
-                }
+                new_data = {"stock": new_ticker, "cost": new_cost, "qty": new_qty, "price": latest_price, "change": change, "reason": "AI 分析生成中..."}
                 st.session_state.watch_list.append(new_data)
                 st.rerun()
             else:
                 st.warning("請先搜尋並選擇一檔股票！")
 
     st.divider() 
-
     st.subheader("目前的觀察股列表")
     st.markdown("💡 **操作提示：請直接點擊下方的「股票代號」，專屬 AI 分析視窗就會彈出來！**")
 
