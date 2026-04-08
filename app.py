@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import random
+import yfinance as yf
+import plotly.graph_objects as go
 
 # 設定網頁標題與畫面寬度
 st.set_page_config(page_title="AI 操盤室", layout="wide")
@@ -12,37 +14,81 @@ if "watch_list" not in st.session_state:
         {"stock": "4919 新唐", "cost": 108.0, "qty": 5, "price": 118.5, "change": "+3.50%", "reason": "代工漲價利多發酵，外資持續買超"}
     ]
 
-# --- ⚡ 神經 (API 模擬區)：模擬向外部抓取真實報價與 AI 分析 ---
+# --- 字典：用來把中文股票代號轉換成 Yahoo Finance 認得的代號 ---
+yf_ticker_map = {
+    "2330 台積電": "2330.TW",
+    "2317 鴻海": "2317.TW",
+    "2454 聯發科": "2454.TW",
+    "3017 奇鋐": "3017.TW",
+    "4919 新唐": "4919.TW",
+    "3689 湧德": "3689.TWO", # 櫃買中心後綴是 .TWO
+    "2327 國巨": "2327.TW",
+    "4958 臻鼎-KY": "4958.TW",
+    "5347 世界": "5347.TWO"
+}
+
+# --- ⚡ 神經 (API 模擬區) ---
 def fetch_simulated_stock_data(stock_name):
-    """模擬從證交所或富果 API 抓取最新股價"""
+    """模擬從證交所抓取最新股價"""
     base_price = random.uniform(50, 500)
     change_pct = random.uniform(-5.0, 9.9)
     return round(base_price, 1), f"{change_pct:+.2f}%"
 
 def generate_ai_strategy(stock_name, cost_price):
     """模擬 AI 根據普林與索普邏輯生成的具體策略"""
-    current_price = cost_price * random.uniform(0.9, 1.2) # 模擬目前市價
-    stop_loss = round(cost_price * 0.9, 1) # 停損設為成本下 10%
-    target_price = round(cost_price * 1.3, 1) # 目標價設為成本上 30%
+    current_price = cost_price * random.uniform(0.9, 1.2)
+    stop_loss = round(cost_price * 0.9, 1) 
     entry_low = round(current_price * 0.98, 1)
     entry_high = round(current_price * 1.02, 1)
     
     pring_text = f"目前 {stock_name} 日線 MACD 處於低檔黃金交叉，量能溫和放大。相對強度 (RS) 突破前波高點，顯示主力洗盤已接近尾聲，進入主升段的機率高達 75%。"
     tharp_text = f"根據您的成本 ({cost_price}) 計算，初始停損點應設於 {stop_loss}。目前 R 倍數為 1.5R，建議啟動移動停利，將防守線推升至近期長紅 K 棒低點。"
     
-    # 結合兩者給出具體區間與理由
     action_text = f"""**💡 綜合 AI 建議操作策略：【區間加碼與抱牢】**
 * **建議進出場區間**：建議在 **{entry_low} ~ {entry_high}** 區間逢低加碼；若跌破 {stop_loss} 則嚴格停損出場。
-* **策略理由**：根據普林動能，該股已確認轉強 (突破下降趨勢線)；同時結合索普風控，在此區間 ({entry_low}~{entry_high}) 買進，距離您的停損點不遠，整體的「風險報酬比」極佳。這是一筆勝率與賠率皆具備的交易。"""
+* **策略理由**：根據普林動能，該股已確認轉強；同時結合索普風控，在此區間買進距離停損點不遠，整體「風險報酬比」極佳。"""
     
     return pring_text, tharp_text, action_text
+
+def draw_kline_chart(stock_name):
+    """使用 Yahoo Finance 抓取真實資料並繪製近 1 年日線圖"""
+    try:
+        yf_symbol = yf_ticker_map.get(stock_name, "2330.TW") # 預設給台積電
+        ticker = yf.Ticker(yf_symbol)
+        df = ticker.history(period="1y") # 抓取近 1 年資料
+        
+        if df.empty:
+            st.error("暫時抓不到此檔股票的真實報價。")
+            return
+
+        # 使用 Plotly 畫 K 線圖
+        fig = go.Figure(data=[go.Candlestick(
+            x=df.index,
+            open=df['Open'], high=df['High'],
+            low=df['Low'], close=df['Close'],
+            name="K線"
+        )])
+        
+        # 美化圖表外觀
+        fig.update_layout(
+            title=f"{stock_name} - 近 1 年日線圖 (真實數據)",
+            yaxis_title="股價 (TWD)",
+            xaxis_rangeslider_visible=False, # 隱藏下方多餘的拉桿
+            margin=dict(l=20, r=20, t=40, b=20),
+            height=350
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    except Exception as e:
+        st.warning(f"圖表載入失敗: {e}")
 
 # --- 🌟 定義彈出視窗 (Pop-up Modal) ---
 @st.dialog("🤖 AI 策略與權證分析站", width="large")
 def show_stock_details(stock_name, cost_price):
     st.markdown(f"### 🎯 正在分析：{stock_name}")
     
-    # 呼叫模擬的 AI 引擎生成動態報告
+    # --- 新增：在這裡呼叫畫圖函數，顯示在策略最上方 ---
+    draw_kline_chart(stock_name)
+    
     pring_text, tharp_text, action_text = generate_ai_strategy(stock_name, cost_price)
     
     col_ai, col_warrant = st.columns([1.2, 1])
@@ -57,7 +103,7 @@ def show_stock_details(stock_name, cost_price):
         st.markdown("#### 🎫 認購權證篩選")
         st.caption("條件自動設定為：到期日 90 天以上、價內外 10% 以內")
         if st.button(f"🔍 尋找 {stock_name[:4]} 的權證", key=f"btn_{stock_name}"):
-            st.success("API 抓取成功！")
+            st.success("抓取成功！")
             mock_warrants = pd.DataFrame({
                 "權證名稱": [f"{stock_name[:4]}群益01", f"{stock_name[:4]}元大02", f"{stock_name[:4]}凱基03"],
                 "履約價": [round(cost_price*1.1, 1), round(cost_price*1.2, 1), round(cost_price*1.05, 1)],
@@ -78,11 +124,11 @@ with tab1:
 with tab2:
     st.header("我的觀察股清單")
     
-    # --- 1. 新增觀察股區塊 ---
     st.subheader("新增觀察股")
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        stock_list = ["請選擇...", "2330 台積電", "2317 鴻海", "2454 聯發科", "3689 湧德", "2327 國巨", "4958 臻鼎-KY"]
+        # 更新了股票名單，加入 5347 世界
+        stock_list = ["請選擇...", "2330 台積電", "2317 鴻海", "2454 聯發科", "3017 奇鋐", "4919 新唐", "3689 湧德", "2327 國巨", "4958 臻鼎-KY", "5347 世界"]
         new_ticker = st.selectbox("🔍 搜尋股票", stock_list)
     with col2:
         new_cost = st.number_input("成本價", min_value=0.0, step=0.1)
@@ -90,35 +136,23 @@ with tab2:
         new_qty = st.number_input("張數", min_value=1, step=1)
     with col4:
         st.markdown("<br>", unsafe_allow_html=True) 
-        # 綁定新增按鈕的功能
         if st.button("➕ 加入清單"):
             if new_ticker != "請選擇...":
-                # 模擬呼叫 API 取得最新價格
                 latest_price, change = fetch_simulated_stock_data(new_ticker)
-                
-                # 將新資料打包並寫入資料庫 (Session State)
                 new_data = {
-                    "stock": new_ticker,
-                    "cost": new_cost,
-                    "qty": new_qty,
-                    "price": latest_price,
-                    "change": change,
-                    "reason": "AI 分析生成中..."
+                    "stock": new_ticker, "cost": new_cost, "qty": new_qty,
+                    "price": latest_price, "change": change, "reason": "AI 分析生成中..."
                 }
                 st.session_state.watch_list.append(new_data)
-                
-                # 重新整理網頁，讓表格更新
                 st.rerun()
             else:
                 st.warning("請先搜尋並選擇一檔股票！")
 
     st.divider() 
 
-    # --- 2. 觀察股列表 (動態資料庫渲染) ---
     st.subheader("目前的觀察股列表")
     st.markdown("💡 **操作提示：請直接點擊下方的「股票代號」，專屬 AI 分析視窗就會彈出來！**")
 
-    # 畫出表格的「標題列」
     header_cols = st.columns([1.5, 1, 1, 1.5, 1.5, 3])
     header_cols[0].markdown("**股票代號 (點擊分析)**")
     header_cols[1].markdown("**成本價**")
@@ -128,15 +162,11 @@ with tab2:
     header_cols[5].markdown("**股價變化原因**")
     st.markdown("---")
 
-    # 畫出表格的「資料列」(從 Session State 中讀取真實/新增的資料)
     for i, row in enumerate(st.session_state.watch_list):
         row_cols = st.columns([1.5, 1, 1, 1.5, 1.5, 3])
-        
         with row_cols[0]:
-            # 點擊按鈕後，將該股名稱與成本價傳給 AI 分析引擎
             if st.button(f"🎯 {row['stock']}", key=f"link_{i}_{row['stock']}", type="tertiary"):
                 show_stock_details(row['stock'], row['cost'])
-        
         row_cols[1].write(row['cost'])
         row_cols[2].write(row['qty'])
         row_cols[3].write(row['price'])
